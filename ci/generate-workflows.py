@@ -18,12 +18,9 @@ def yv(v, depth=0):
             result = ""
             for l in v.splitlines():
                 result = result + "\n" + (f"{indent}{l}" if l else "")
-            return "|" + result
+            return f"|{result}"
         # This is hideous
-        if '"' in v:
-            return "'" + v + "'"
-        return '"' + v + '"'
-
+        return f"'{v}'" if '"' in v else f'"{v}"'
     return v
 
 
@@ -44,8 +41,7 @@ class RunStep(Step):
         f.write(f"{indent}- name: {yv(self.name)}\n")
         if self.env:
             f.write(f"{indent}  env:\n")
-            keys = list(self.env.keys())
-            keys.sort()
+            keys = sorted(self.env.keys())
             for k in keys:
                 v = self.env[k]
                 f.write(f"{indent}    {k}: {v}\n")
@@ -122,10 +118,7 @@ class Target(object):
         is_tag=False,
     ):
         if not name:
-            if container:
-                name = container
-            else:
-                name = os
+            name = container if container else os
         self.name = name.replace(":", "")
         self.os = os
         self.container = container
@@ -145,33 +138,19 @@ class Target(object):
                 f.write(f"{indent}  {k}: {yv(v, depth + 3)}\n")
 
     def uses_yum(self):
-        if "fedora" in self.name:
-            return True
-        if "centos" in self.name:
-            return True
-        return False
+        return True if "fedora" in self.name else "centos" in self.name
 
     def uses_apt(self):
-        if "ubuntu" in self.name:
-            return True
-        if "debian" in self.name:
-            return True
-        return False
+        return True if "ubuntu" in self.name else "debian" in self.name
 
     def uses_apk(self):
-        if "alpine" in self.name:
-            return True
-        return False
+        return "alpine" in self.name
 
     def uses_zypper(self):
-        if "suse" in self.name:
-            return True
-        return False
+        return "suse" in self.name
 
     def needs_sudo(self):
-        if not self.container and self.uses_apt():
-            return True
-        return False
+        return bool(not self.container and self.uses_apt())
 
     def install_system_package(self, name):
         installer = None
@@ -222,16 +201,16 @@ class Target(object):
     def install_newer_compiler(self):
         steps = []
         if self.name == "centos7":
-            steps.append(
-                RunStep(
-                    "Install SCL",
-                    "yum install -y centos-release-scl-rh",
-                )
-            )
-            steps.append(
-                RunStep(
-                    "Update compiler",
-                    "yum install -y devtoolset-9-gcc devtoolset-9-gcc-c++",
+            steps.extend(
+                (
+                    RunStep(
+                        "Install SCL",
+                        "yum install -y centos-release-scl-rh",
+                    ),
+                    RunStep(
+                        "Update compiler",
+                        "yum install -y devtoolset-9-gcc devtoolset-9-gcc-c++",
+                    ),
                 )
             )
         return steps
@@ -358,7 +337,8 @@ cargo build --all --release""",
             enable = ""
         return [
             RunStep(
-                name="Build (Release mode)", run=enable + "cargo build --all --release"
+                name="Build (Release mode)",
+                run=f"{enable}cargo build --all --release",
             )
         ]
 
@@ -376,7 +356,8 @@ cargo build --all --release""",
             enable = ""
         return [
             RunStep(
-                name="Test (Release mode)", run=enable + "cargo test --all --release"
+                name="Test (Release mode)",
+                run=f"{enable}cargo test --all --release",
             )
         ]
 
@@ -401,37 +382,21 @@ cargo build --all --release""",
         steps = []
 
         if self.uses_yum():
-            steps.append(
-                RunStep(
-                    "Move RPM",
-                    f"mv ~/rpmbuild/RPMS/*/*.rpm .",
-                )
-            )
+            steps.append(RunStep("Move RPM", "mv ~/rpmbuild/RPMS/*/*.rpm ."))
         elif self.uses_apk():
             steps += [
-                # Add the distro name/version into the filename
                 RunStep(
                     "Rename APKs",
                     f"mv ~/packages/wezterm/x86_64/*.apk $(echo ~/packages/wezterm/x86_64/*.apk | sed -e 's/wezterm-/wezterm-{self.name}-/')",
                 ),
-                # Move it to the repo dir
-                RunStep(
-                    "Move APKs",
-                    f"mv ~/packages/wezterm/x86_64/*.apk .",
-                ),
-                # Move and rename the keys
+                RunStep("Move APKs", "mv ~/packages/wezterm/x86_64/*.apk ."),
                 RunStep(
                     "Move APK keys",
                     f"mv ~/.abuild/*.pub wezterm-{self.name}.pub",
                 ),
             ]
         elif self.uses_zypper():
-            steps.append(
-                RunStep(
-                    "Move RPM",
-                    f"mv /usr/src/packages/RPMS/*/*.rpm .",
-                )
-            )
+            steps.append(RunStep("Move RPM", "mv /usr/src/packages/RPMS/*/*.rpm ."))
 
         patterns = self.asset_patterns()
         glob = " ".join(patterns)
@@ -461,9 +426,7 @@ cargo build --all --release""",
                 patterns.append("*.pub")
 
         if self.app_image:
-            patterns.append("*src.tar.gz")
-            patterns.append("*.AppImage")
-            patterns.append("*.zsync")
+            patterns.extend(("*src.tar.gz", "*.AppImage", "*.zsync"))
         return patterns
 
     def upload_artifact_nightly(self):
@@ -675,18 +638,17 @@ cargo build --all --release""",
                 RunStep("Update APT", f"{sudo}apt update"),
             ]
 
-        if self.uses_zypper():
-            if self.container:
-                steps += [
-                    RunStep(
-                        "Seed GITHUB_PATH to work around possible @action/core bug",
-                        f'echo "$PATH:/bin:/usr/bin" >> $GITHUB_PATH',
-                    ),
-                    RunStep(
-                        "Install util-linux",
-                        "zypper install -y util-linux",
-                    ),
-                ]
+        if self.uses_zypper() and self.container:
+            steps += [
+                RunStep(
+                    "Seed GITHUB_PATH to work around possible @action/core bug",
+                    'echo "$PATH:/bin:/usr/bin" >> $GITHUB_PATH',
+                ),
+                RunStep(
+                    "Install util-linux",
+                    "zypper install -y util-linux",
+                ),
+            ]
         if self.container:
             if ("fedora" in self.container) or (
                 ("centos" in self.container) and ("centos7" not in self.container)
@@ -733,11 +695,10 @@ cargo build --all --release""",
         steps += self.install_git()
         steps += self.install_curl()
 
-        if self.uses_apt():
-            if self.container:
-                steps += [
-                    RunStep("Update APT", f"{sudo}apt update"),
-                ]
+        if self.uses_apt() and self.container:
+            steps += [
+                RunStep("Update APT", f"{sudo}apt update"),
+            ]
 
         steps += self.install_openssh_server()
         steps += self.checkout()
@@ -873,11 +834,7 @@ def generate_actions(namer, jobber, trigger, is_continuous, is_tag=False):
         job, uploader = jobber(t)
 
         file_name = f".github/workflows/gen_{name}.yml"
-        if job.container:
-            container = f"container: {yv(job.container)}"
-        else:
-            container = ""
-
+        container = f"container: {yv(job.container)}" if job.container else ""
         with open(file_name, "w") as f:
             f.write(
                 f"""name: {name}

@@ -164,9 +164,7 @@ def screen_shot_table(scheme):
             line += f" \033[{fg}\033[{bg}  {T}  \033[0m"
         lines.append(line)
 
-    lines.append("")
-    lines.append("")
-
+    lines.extend(("", ""))
     screen = "\r\n".join(lines)
 
     header = {
